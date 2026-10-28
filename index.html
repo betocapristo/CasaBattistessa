@@ -206,6 +206,12 @@ label.in{display:flex;flex-direction:column;gap:3px;font-size:13px;color:var(--g
 .arch.falta{opacity:.5}
 .gal.thumbs .th img{width:auto;max-width:100%;height:auto;max-height:70vh;object-fit:contain}
 
+.riel .pubbtn{margin:16px 22px 0;padding:10px 12px;background:#2f6fdc;color:#fff;border:0;font:600 14px var(--fuente-t);cursor:pointer;text-align:center}
+.riel .pubbtn:hover{background:#4a85ec}
+.riel .pubbtn:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.riel .pubbtn+.pie{margin-top:14px}
+@media(max-width:900px){.riel .pubbtn{margin:6px 8px;width:auto}}
+
 </style>
 </head>
 <body>
@@ -621,6 +627,7 @@ const TITULOS = {resumen: 'Resumen de control', presupuesto: 'Presupuesto por gr
 function pintarRiel() {
   $('#riel').innerHTML = `<div class="marca"><b>${esc(S.obra.nombre || 'Obra')}</b><span>${esc(S.obra.propietario || 'Administración de obra')}</span></div>` +
     NAV.map(g => `<div class="grupo">${g.g}</div>` + g.items.filter(([v]) => !(VISOR && v === 'config')).map(([v, l]) => `<button class="nav ${v === VIEW ? 'on' : ''}" data-act="vista" data-v="${v}">${l}</button>`).join('')).join('') +
+    (VISOR ? '' : `<button class="pubbtn" data-act="publicarRapido">Publicar para el propietario</button>`) +
     `<div class="pie">${VISOR ? 'Vista de solo lectura' : 'Edición · datos en este navegador'}<br>Dólar blue de referencia: $${fmt(S.obra.tc)}</div>`;
 }
 function pintarRotulo() {
@@ -1393,6 +1400,15 @@ function fPublicar() {
     {k: 'todas', label: 'Reenviar todos los archivos', type: 'select', opts: [['no', 'No, solo los nuevos'], ['si', 'Sí, todos']], full: 1}
   ], {repo: g.repo || '', branch: g.branch || 'main', token: g.token || '', clave: ses, todas: 'no'}, o => { publicarJob(o); return false; });
 }
+const sha = async t => b64(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)));
+function publicarRapido() {
+  const g = JSON.parse(lsGet(KEY_GH, '{}'));
+  if (!g.repo || !g.token) return fPublicar();
+  form('Publicar para el propietario', [
+    {k: 'clave', label: 'Clave de acceso del propietario', type: 'password', req: 1, full: 1, hint: `Se publica en ${esc(g.repo)} (${esc(g.branch || 'main')}) con todos los datos y archivos cargados.`}
+  ], {clave: ''}, o => { publicarJob({repo: g.repo, branch: g.branch || 'main', token: g.token, clave: o.clave, todas: 'no', auto: 1}); return false; });
+  const bt = $('#modal .bt .btn.pri'); if (bt) bt.textContent = 'Publicar';
+}
 async function publicarJob(c) {
   const est = document.createElement('p'); est.className = 'hint'; est.id = 'pubEstado'; est.setAttribute('role', 'status'); $('#modal form').appendChild(est);
   const say = t => { est.textContent = t; };
@@ -1407,6 +1423,9 @@ async function publicarJob(c) {
       const r = await fetch(base + path, {method: 'PUT', headers: {...H, 'Content-Type': 'application/json'}, body: JSON.stringify({message: msg, content: b64c, branch: c.branch, ...(sha ? {sha} : {})})});
       if (!r.ok) { let m = ''; try { m = (await r.json()).message; } catch (e) { /* noop */ } throw new Error('No se pudo subir ' + path + ': ' + (m || r.status)); }
     };
+    const ch = await sha(c.clave + '|' + saltLocal().join('.')), prev = JSON.parse(lsGet(KEY_GH, '{}'));
+    if (c.auto && prev.ch && prev.ch !== ch) { c.todas = 'si'; say('La clave cambió: se reenviarán todos los archivos.'); }
+    c.ch = ch;
     say('Cifrando datos…');
     const salt = saltLocal(), key = await derivar(c.clave, salt);
     const {iv, ct} = await cifrarBytes(new TextEncoder().encode(JSON.stringify(S)), key);
@@ -1422,7 +1441,7 @@ async function publicarJob(c) {
     }
     say('Subiendo datos…');
     await put('data.json', b64(new TextEncoder().encode(JSON.stringify(env))), 'Actualización de datos de obra (Rev. ' + (S.rev || 0) + ')');
-    lsSet(KEY_GH, JSON.stringify({repo: c.repo, branch: c.branch, token: c.token, ultima: Date.now()})); lsSet(KEY_EXP, Date.now());
+    lsSet(KEY_GH, JSON.stringify({repo: c.repo, branch: c.branch, token: c.token, ch: c.ch || await sha(c.clave + '|' + saltLocal().join('.')), ultima: Date.now()})); lsSet(KEY_EXP, Date.now());
     try { sessionStorage.setItem('obra_clave', c.clave); } catch (e2) { /* noop */ }
     logc('Publicación', c.repo + ' · ' + ids.length + ' fotos nuevas'); guardar();
     say('Publicado. En un par de minutos el propietario ve la versión nueva con su clave.');
@@ -1523,6 +1542,7 @@ document.addEventListener('click', ev => {
   else if (a === 'importXLSX') $('#fXLSX').click();
   else if (a === 'plantilla') plantilla();
   else if (a === 'publicar') fPublicar();
+  else if (a === 'publicarRapido') publicarRapido();
   else if (a === 'demo') demo();
   else if (a === 'restaurar') { const sn = JSON.parse(lsGet(KEY_SNAP, '[]'))[+el.dataset.i]; if (sn && confirm('Se reemplazan los datos actuales por la copia del ' + fd(sn.d) + '. ¿Seguir?')) { S = migrar(JSON.parse(sn.data)); logc('Restauración', 'copia del ' + sn.d); guardar(); render(); } }
   else if (a === 'reset') { if (confirm('¿Borrar TODOS los datos de este navegador, incluidas las fotos? Exportá antes el respaldo si querés conservarlos.')) { fotosIds().forEach(fDel); S = nuevoEstado(); guardar(); render(); } }
