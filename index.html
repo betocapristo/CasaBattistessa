@@ -212,6 +212,16 @@ label.in{display:flex;flex-direction:column;gap:3px;font-size:13px;color:var(--g
 .riel .pubbtn+.pie{margin-top:14px}
 @media(max-width:900px){.riel .pubbtn{margin:6px 8px;width:auto}}
 
+tr.det td{padding:0 0 6px 24px;background:transparent;border-top:0}
+tr.det summary{cursor:pointer;color:var(--azul);font-size:13px;padding:2px 0}
+.det-t{width:auto;min-width:60%;margin:6px 0 4px;font-size:13px}
+.det-t th,.det-t td{padding:3px 12px 3px 0;border:0;border-bottom:1px solid var(--linea)}
+.items-box{border:1px solid var(--trazo);padding:10px;background:var(--hoja)}
+.items-box table{width:100%;font-size:14px}
+.items-box td{padding:3px 4px 3px 0;vertical-align:top}
+.items-box input,.items-box select{width:100%;min-width:0}
+.items-tot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-weight:600}
+
 </style>
 </head>
 <body>
@@ -304,7 +314,7 @@ function migrar(d) {
   d.gremios.forEach(g => { if (!g.etapaId) g.etapaId = et(g.etapa || ETAPAS_BASE[ETAPAS_BASE.length - 1]).id; delete g.etapa; });
   d.partidas = d.partidas || d.presupuesto || []; delete d.presupuesto;
   d.partidas.forEach(p => {
-    p.fotos = p.fotos || []; p.pagos = p.pagos || []; p.avance = +p.avance || 0; p.diasEntrega = +p.diasEntrega || 0;
+    p.fotos = p.fotos || []; p.sub = p.sub || ''; p.items = p.items || []; p.pagos = p.pagos || []; p.avance = +p.avance || 0; p.diasEntrega = +p.diasEntrega || 0;
     p.fechaCarga = p.fechaCarga || ''; p.fechaConf = p.fechaConf || ''; p.proveedor = p.proveedor || ''; p.cacTipo = p.cacTipo || ''; p.cacBase = p.cacBase || '';
     if (p.cron && p.cron.length && !p.pagos.length) p.pagos = p.cron.map(c => ({concepto: 'Cronograma', pct: p.monto ? c.monto / p.monto * 100 : 0, ref: 'fecha', dias: 0, fecha: c.mes + '-15'}));
     delete p.cron;
@@ -431,20 +441,22 @@ function planPorMes() {
 }
 
 /* ---- Agrupaciones ---- */
+const subNombre = (gid, p) => gNombre(gid) + ' › ' + ((p && p.sub) || 'Sin subfamilia');
 function claveEgreso(dim, e) {
   if (dim === 'gremio') return gNombre(e.gremioId);
+  if (dim === 'sub') return subNombre(e.gremioId, partida(e.partidaId));
   if (dim === 'etapa') return gEtapa(e.gremioId);
-  if (dim === 'proveedor') return e.proveedor || '(sin proveedor)';
+  if (dim === 'proveedor') { const p = partida(e.partidaId); return (p && p.proveedor) || e.proveedor || '(sin proveedor)'; }
   if (dim === 'medio') return e.medio || '(sin medio)';
   return (e.fecha || '').slice(0, 7) || '(sin fecha)';
 }
 function agrupar(dim) {
   const m = {};
   const get = k => m[k] || (m[k] = {k, pres: 0, pag: 0, pen: 0, n: 0});
-  const conPres = dim === 'gremio' || dim === 'etapa';
+  const conPres = ['gremio', 'etapa', 'sub', 'proveedor'].includes(dim);
   if (conPres) {
-    S.gremios.forEach(g => get(dim === 'gremio' ? g.nombre : eNombre(g.etapaId)));
-    S.partidas.forEach(p => { get(dim === 'gremio' ? gNombre(p.gremioId) : gEtapa(p.gremioId)).pres += vP(p); });
+    if (dim === 'gremio' || dim === 'etapa') S.gremios.forEach(g => get(dim === 'gremio' ? g.nombre : eNombre(g.etapaId)));
+    S.partidas.forEach(p => { get(dim === 'gremio' ? gNombre(p.gremioId) : dim === 'sub' ? subNombre(p.gremioId, p) : dim === 'proveedor' ? (p.proveedor || '(sin proveedor)') : gEtapa(p.gremioId)).pres += vP(p); });
   }
   S.egresos.forEach(e => { const r = get(claveEgreso(dim, e)); if (e.estado === 'Pagado') r.pag += vE(e); else r.pen += vE(e); r.n++; });
   let arr = Object.values(m);
@@ -705,8 +717,8 @@ function verFotos(t, id) {
 function vResumen() {
   const OT = MON === 'USD' ? 'ARS' : 'USD';
   const t = totales(), t2 = totales(OT), py = proyeccionObra();
-  const dims = [['gremio', 'Gremio'], ['etapa', 'Etapa'], ['proveedor', 'Proveedor'], ['medio', 'Medio de pago'], ['mes', 'Mes']];
-  const rows = agrupar(GROUP), conPres = GROUP === 'gremio' || GROUP === 'etapa';
+  const dims = [['gremio', 'Gremio'], ['sub', 'Gremio › subfamilia'], ['etapa', 'Etapa'], ['proveedor', 'Proveedor'], ['medio', 'Medio de pago'], ['mes', 'Mes']];
+  const rows = agrupar(GROUP), conPres = ['gremio', 'etapa', 'sub', 'proveedor'].includes(GROUP);
   const inc = t.pag + t.pen;
   const ivaTot = S.egresos.reduce((s, e) => s + conv(ivaCont(e), e.moneda, e.tc, MON), 0);
   const sinComp = S.egresos.filter(e => e.compTipo === 'Sin comprobante').reduce((s, e) => s + vE(e), 0);
@@ -765,12 +777,13 @@ function vPresupuesto() {
         const ms = S.modif.filter(m => m.partidaId === p.id), net = ms.filter(m => m.aprobado).reduce((s, m) => s + m.monto, 0), pen = ms.filter(m => !m.aprobado).length;
         const pc = pagosCalc(p), sp = pc.reduce((s, x) => s + (+x.pct || 0), 0), sf = pc.filter(x => !x.fecha).length, fs = pc.filter(x => x.fecha).map(x => x.fecha).sort();
         const flujo = pc.length ? `<span class="tag ${Math.abs(sp - 100) > 0.01 || sf ? 'q' : 'ok'}">${pc.length} pagos${fs.length ? ' · ' + fd(fs[0]) + ' a ' + fd(fs[fs.length - 1]) : ''}${Math.abs(sp - 100) > 0.01 ? ' · suma ' + fmt(sp) + ' %' : ''}${sf ? ' · ' + sf + ' sin fecha' : ''}</span>` : '<span class="hint">sin definir</span>';
-        h += `<tr><td class="ind dos">${esc(p.desc || '(sin descripción)')}<small>${esc(p.proveedor || 'sin contratista')}${p.cacTipo ? ' · ' + esc(CAC_TIPOS.find(c => c[0] === p.cacTipo)[1]) : ''}</small></td>
+        h += `<tr><td class="ind dos">${esc(p.desc || '(sin descripción)')}<small>${p.sub ? esc(p.sub) + ' · ' : ''}${esc(p.proveedor || 'sin contratista')}${p.cacTipo ? ' · ' + esc(CAC_TIPOS.find(c => c[0] === p.cacTipo)[1]) : ''}</small></td>
           <td class="n">${p.moneda} ${fmt(p.monto)}</td><td class="n">${net ? (net > 0 ? '+' : '') + fmt(net) : '—'}${pen ? `<br><span class="tag q">${pen} sin aprobar</span>` : ''}</td><td class="n"><b>${p.moneda} ${fmt(vigenteNat(p))}</b></td><td class="n">${money(vP(p))}</td>
           <td class="dos">${fd(p.fechaCarga)}<small>${p.fechaConf ? 'confirmada ' + fd(p.fechaConf) : 'sin confirmar'}</small></td>
           <td class="dos">${p.diasEntrega ? p.diasEntrega + ' días' : '—'}<small>${p.fechaConf && p.diasEntrega ? fd(addDias(p.fechaConf, p.diasEntrega)) : ''}</small></td>
           <td>${flujo} <button class="btn mini edit" data-act="pagos" data-id="${p.id}">Flujo</button> ${clip('partidas', p)}</td>
           <td class="edit n"><button class="btn mini" data-act="editPartida" data-id="${p.id}">Editar</button> <button class="btn mini del" data-act="delPartida" data-id="${p.id}">Borrar</button></td></tr>`;
+        if ((p.items || []).length) h += `<tr class="det"><td colspan="9"><details><summary>Detalle del presupuesto: ${p.items.length} ítem${p.items.length > 1 ? 's' : ''}</summary><table class="det-t"><thead><tr><th>Ítem</th><th>Tipo</th><th class="n">Cant.</th><th class="n">Precio unit.</th><th class="n">Importe (${p.moneda})</th></tr></thead><tbody>${p.items.map(i => `<tr><td>${esc(i.desc)}</td><td>${esc(i.tipo || '')}</td><td class="n">${i.cant ? fmt2(i.cant) + (i.unidad ? ' ' + esc(i.unidad) : '') : ''}</td><td class="n">${i.pu ? fmt2(i.pu) : ''}</td><td class="n">${fmt(i.monto)}</td></tr>`).join('')}</tbody></table></details></td></tr>`;
       });
     });
     h += `<tr class="tot"><td>Total presupuesto vigente</td><td></td><td></td><td></td><td class="n">${money(tot)}</td><td></td><td></td><td></td><td class="edit"></td></tr></tbody></table></div>`;
@@ -1062,6 +1075,7 @@ function cerrarForm() {
 function form(titulo, campos, vals, onSave, hook, ancho) {
   FT = {lista: (vals.fotos || []).map(f => ({...f})), nuevas: [], quitadas: []};
   const campo = c => {
+    if (c.type === 'items') return `<div class="full"><div class="hint">${c.label}</div><div class="items-box" id="itemsBox"></div></div>`;
     if (c.type === 'fotos') return `<div class="full"><div class="hint">Archivos adjuntos: fotos, PDF, Excel, Word o cualquier otro (hasta 25 MB cada uno). Podés elegir varios.</div><div class="thumbs" id="thumbs"></div><input type="file" id="fotoIn" multiple aria-label="Agregar archivos"></div>`;
     const v = vals[c.k] ?? '';
     let inp;
@@ -1074,6 +1088,7 @@ function form(titulo, campos, vals, onSave, hook, ancho) {
   const provs = [...new Set([...S.egresos.map(e => e.proveedor), ...S.partidas.map(p => p.proveedor)].filter(Boolean))];
   $('#modal').innerHTML = `<div class="ov"><form class="md ${ancho ? 'ancho' : ''}"><h3>${titulo}</h3><div class="grid">${campos.map(campo).join('')}</div>
     <datalist id="dlProv">${provs.map(p => `<option value="${esc(p)}">`).join('')}</datalist>
+    <datalist id="dlSub">${[...new Set(S.partidas.map(p => p.sub).filter(Boolean))].map(p => `<option value="${esc(p)}">`).join('')}</datalist>
     <datalist id="dlApo">${[...new Set(S.ingresos.map(i => i.aportante).filter(Boolean))].map(p => `<option value="${esc(p)}">`).join('')}</datalist>
     <div class="bt"><button type="button" class="btn" data-act="cerrar">Cancelar</button><button class="btn pri">Guardar</button></div></form></div>`;
   const f = $('#modal form');
@@ -1109,6 +1124,7 @@ function form(titulo, campos, vals, onSave, hook, ancho) {
     ev.preventDefault();
     const o = {};
     campos.forEach(c => {
+      if (c.type === 'items') return;
       if (c.type === 'fotos') { o.fotos = FT.lista.slice(); return; }
       let v = f.elements[c.k].value; if (c.type === 'number') v = parseFloat(v) || 0; o[c.k] = v;
     });
@@ -1120,7 +1136,7 @@ function form(titulo, campos, vals, onSave, hook, ancho) {
 }
 const optG = () => S.gremios.map(g => [g.id, g.nombre]);
 const optMon = [['ARS', 'ARS (pesos)'], ['USD', 'USD (dólares)']];
-const optPartidas = gid => [['', 'Sin partida (gasto general del gremio)'], ...S.partidas.filter(p => !gid || p.gremioId === gid).map(p => [p.id, (p.desc || 'partida') + (p.proveedor ? ' · ' + p.proveedor : '') + ' (' + p.moneda + ')'])];
+const optPartidas = gid => [['', 'Sin partida (gasto general del gremio)'], ...S.partidas.filter(p => !gid || p.gremioId === gid).map(p => [p.id, (p.sub ? p.sub + ' · ' : '') + (p.desc || 'partida') + (p.proveedor ? ' · ' + p.proveedor : '') + ' (' + p.moneda + ')'])];
 const optPartidasTodas = () => S.partidas.map(p => [p.id, gNombre(p.gremioId) + ' · ' + (p.desc || 'partida') + ' (' + p.moneda + ')']);
 const cerrado = () => alert('Ese mes está cerrado (' + nombreMes(S.obra.cerradoHasta) + '). Reabrilo en Configuración si necesitás corregirlo.');
 
@@ -1161,13 +1177,17 @@ function fEgreso(e) {
 }
 function fPartida(p) {
   const nuevo = !p;
-  const v = p ? {...p, tc: p.tc || S.obra.tc} : {gremioId: (S.gremios[0] || {}).id, moneda: 'USD', tc: S.obra.tc, fechaCarga: hoy(), fechaConf: '', diasEntrega: 0, cacTipo: '', cacBase: '', fotos: [], __traer: 1};
+  const v = p ? {...p, tc: p.tc || S.obra.tc} : {gremioId: FILT.g || (S.gremios[0] || {}).id, moneda: 'USD', tc: S.obra.tc, fechaCarga: hoy(), fechaConf: '', diasEntrega: 0, cacTipo: '', cacBase: '', sub: '', fotos: [], __traer: 1};
+  let items = ((p && p.items) || []).map(i => ({...i}));
+  const TIPOS = ['Mano de obra', 'Materiales', 'Honorarios', 'Equipos', 'Otro'];
   form(nuevo ? 'Nueva partida de presupuesto' : 'Editar partida', [
-    {k: 'gremioId', label: 'Gremio', type: 'select', opts: optG()},
-    {k: 'proveedor', label: 'Contratista o proveedor', list: 'dlProv'},
-    {k: 'desc', label: 'Descripción (mano de obra, materiales, contrato…)', full: 1},
+    {k: 'gremioId', label: 'Gremio (familia)', type: 'select', opts: optG()},
+    {k: 'sub', label: 'Subfamilia', list: 'dlSub', hint: 'Para distinguir varios del mismo gremio. Ej.: Agrimensor 1, Pintor de interiores'},
+    {k: 'proveedor', label: 'Contratista o proveedor (persona o empresa)', list: 'dlProv', full: 1},
+    {k: 'desc', label: 'Descripción del presupuesto', full: 1, hint: 'Ej.: Presupuesto de mensura y amojonamiento'},
     {k: 'moneda', label: 'Moneda del contrato', type: 'select', opts: optMon},
-    {k: 'monto', label: 'Monto original', type: 'number', req: 1, min: 0},
+    {k: 'monto', label: 'Monto original', type: 'number', req: 1, min: 0, hint: 'Si cargás ítems, se calcula solo con la suma'},
+    {k: 'items', type: 'items', label: 'Ítems del presupuesto (opcional): tareas, materiales y mano de obra con su precio'},
     {k: 'fechaCarga', label: 'Fecha de carga del presupuesto', type: 'date'},
     {k: 'fechaConf', label: 'Fecha de confirmación', type: 'date', hint: 'Cuando el contratista confirma y se congela el precio'},
     {k: 'diasEntrega', label: 'Días para la entrega', type: 'number', min: 0, hint: 'Desde la confirmación hasta tener el material o iniciar la obra'},
@@ -1176,11 +1196,38 @@ function fPartida(p) {
     {k: 'tc', label: 'Cotización del dólar al presupuestar (ARS por USD) *', type: 'number', req: 1, min: 0.01, full: 1, dolar: 1},
     {k: 'fotos', type: 'fotos'}
   ], v, o => {
+    items = items.filter(i => i.desc || +i.monto);
+    if (items.length) o.monto = items.reduce((s, i) => s + (+i.monto || 0), 0);
     if (!nuevo && p.fechaConf && o.monto !== p.monto && !confirm('Esta partida ya está confirmada. Cambiar el monto original altera la línea base. Para cambios posteriores conviene registrar un adicional o deductivo. ¿Cambiarlo igual?')) return false;
     if (o.tc > 0) S.obra.tc = o.tc;
+    o.items = items.map(i => ({desc: i.desc || '', tipo: i.tipo || '', unidad: i.unidad || '', cant: +i.cant || 0, pu: +i.pu || 0, monto: +i.monto || 0}));
     if (nuevo) S.partidas.push({id: uid(), pagos: [], avance: 0, ...o}); else Object.assign(p, o);
-    logc(nuevo ? 'Partida nueva' : 'Partida editada', `${gNombre(o.gremioId)} · ${o.desc || 'partida'} · ${o.moneda} ${fmt(o.monto)}`);
-  });
+    logc(nuevo ? 'Partida nueva' : 'Partida editada', `${gNombre(o.gremioId)}${o.sub ? ' › ' + o.sub : ''} · ${o.desc || 'partida'} · ${o.moneda} ${fmt(o.monto)}${items.length ? ' (' + items.length + ' ítems)' : ''}`);
+  }, f => {
+    const box = $('#itemsBox'), mi = f.elements.monto;
+    const total = () => items.reduce((s, i) => s + (+i.monto || 0), 0);
+    const sync = () => { const t = $('#itTot'); if (t) t.textContent = fmt(total()); if (items.length) { mi.value = Math.round(total() * 100) / 100; mi.readOnly = true; } else mi.readOnly = false; };
+    const pintar = () => {
+      box.innerHTML = (items.length ? `<table><thead><tr><th>Ítem</th><th style="width:128px">Tipo</th><th style="width:70px">Cant.</th><th style="width:60px">Unid.</th><th style="width:100px">Precio unit.</th><th style="width:110px">Importe</th><th style="width:30px"></th></tr></thead><tbody>${items.map((i, k) => `<tr>
+        <td><input data-k="${k}" data-f="desc" value="${esc(i.desc)}" placeholder="Tarea o material" aria-label="Ítem"></td>
+        <td><select data-k="${k}" data-f="tipo" aria-label="Tipo">${TIPOS.map(t => `<option ${i.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
+        <td><input type="number" step="any" data-k="${k}" data-f="cant" value="${i.cant || ''}" aria-label="Cantidad"></td><td><input data-k="${k}" data-f="unidad" value="${esc(i.unidad || '')}" aria-label="Unidad"></td>
+        <td><input type="number" step="any" data-k="${k}" data-f="pu" value="${i.pu || ''}" aria-label="Precio unitario"></td><td><input type="number" step="any" data-k="${k}" data-f="monto" value="${i.monto || ''}" aria-label="Importe"></td>
+        <td><button type="button" class="btn mini del" data-k="${k}" data-f="del" aria-label="Quitar ítem">×</button></td></tr>`).join('')}</tbody></table>` : '<span class="hint">Sin ítems: se usa el monto original que cargues arriba.</span>')
+        + `<div class="items-tot"><button type="button" class="btn mini" id="itAdd">Agregar ítem</button>${items.length ? `<span>Total: ${v.moneda === 'ARS' ? '' : ''}<span id="itTot"></span></span>` : ''}</div>`;
+      $('#itAdd').onclick = () => { items.push({desc: '', tipo: 'Mano de obra', unidad: '', cant: 0, pu: 0, monto: 0}); pintar(); const l = box.querySelectorAll('tbody tr:last-child input')[0]; if (l) l.focus(); };
+      sync();
+    };
+    box.addEventListener('input', e => {
+      const t = e.target, k = t.dataset.k; if (k === undefined || t.dataset.f === 'del') return;
+      const fl = t.dataset.f, it = items[k]; it[fl] = (fl === 'desc' || fl === 'tipo' || fl === 'unidad') ? t.value : (parseFloat(t.value) || 0);
+      if ((fl === 'cant' || fl === 'pu') && it.cant && it.pu) { it.monto = Math.round(it.cant * it.pu * 100) / 100; const m = box.querySelector(`[data-k="${k}"][data-f="monto"]`); if (m) m.value = it.monto; }
+      sync();
+    });
+    box.addEventListener('click', e => { const t = e.target; if (t.dataset.f === 'del') { items.splice(+t.dataset.k, 1); pintar(); } });
+    f.elements.moneda.addEventListener('change', sync);
+    pintar();
+  }, true);
 }
 function fModif(m) {
   const nuevo = !m;
@@ -1340,8 +1387,9 @@ async function importarPaquete(file) {
 function exportXLSX() {
   if (typeof XLSX === 'undefined') return alert('No se pudo cargar la librería de Excel (sin internet).');
   const wb = XLSX.utils.book_new(), add = (rows, n) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), n);
-  add(S.partidas.map(p => ({Gremio: gNombre(p.gremioId), Etapa: gEtapa(p.gremioId), Partida: p.desc, Contratista: p.proveedor, Moneda: p.moneda, Original: p.monto, Vigente: vigenteNat(p), 'Dólar al presupuestar': p.tc, 'Fecha de carga': p.fechaCarga, 'Fecha de confirmación': p.fechaConf, 'Días de entrega': p.diasEntrega, 'Avance físico %': p.avance, Índice: p.cacTipo})), 'Partidas');
+  add(S.partidas.map(p => ({Gremio: gNombre(p.gremioId), Subfamilia: p.sub || '', Etapa: gEtapa(p.gremioId), Partida: p.desc, Contratista: p.proveedor, Moneda: p.moneda, Original: p.monto, Vigente: vigenteNat(p), 'Dólar al presupuestar': p.tc, 'Fecha de carga': p.fechaCarga, 'Fecha de confirmación': p.fechaConf, 'Días de entrega': p.diasEntrega, 'Avance físico %': p.avance, Índice: p.cacTipo})), 'Partidas');
   add(S.partidas.flatMap(p => pagosCalc(p).map(x => ({Gremio: gNombre(p.gremioId), Partida: p.desc, Concepto: x.concepto, '%': x.pct, Desde: x.ref, 'Días': x.dias, Fecha: x.fecha, Moneda: p.moneda, Monto: Math.round(x.monto)}))), 'Flujo de pagos');
+  add(S.partidas.flatMap(p => (p.items || []).map(i => ({Gremio: gNombre(p.gremioId), Subfamilia: p.sub || '', Contratista: p.proveedor, Presupuesto: p.desc, Ítem: i.desc, Tipo: i.tipo, Cantidad: i.cant, Unidad: i.unidad, 'Precio unitario': i.pu, Importe: i.monto, Moneda: p.moneda}))), 'Ítems de presupuesto');
   add(S.modif.map(m => ({Fecha: m.fecha, Partida: pNombre(m.partidaId), Tipo: m.tipo, Monto: m.monto, Motivo: m.motivo, Aprobada: m.aprobado ? 'Sí' : 'No'})), 'Modificaciones');
   add(egresosFiltrados().map(e => ({Fecha: e.fecha, Gremio: gNombre(e.gremioId), Partida: pNombre(e.partidaId), Proveedor: e.proveedor, Concepto: e.concepto, 'Tipo comprobante': e.compTipo, Comprobante: e.comprobante, 'IVA %': e.ivaPct, Medio: e.medio, Estado: e.estado, Moneda: e.moneda, Importe: e.importe, Dólar: e.tc || S.obra.tc, ARS: Math.round(vEm(e, 'ARS')), USD: Math.round(vEm(e, 'USD'))})), 'Egresos');
   add(S.ingresos.map(i => ({Fecha: i.fecha, Aportante: i.aportante, Concepto: i.concepto, Comprobante: i.comprobante, Medio: i.medio, Estado: i.estado, Moneda: i.moneda, Importe: i.importe, Dólar: i.tc || S.obra.tc, ARS: Math.round(vEm(i, 'ARS')), USD: Math.round(vEm(i, 'USD'))})), 'Aportes');
