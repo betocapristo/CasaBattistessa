@@ -314,13 +314,13 @@ function migrar(d) {
   d.gremios.forEach(g => { if (!g.etapaId) g.etapaId = et(g.etapa || ETAPAS_BASE[ETAPAS_BASE.length - 1]).id; delete g.etapa; });
   d.partidas = d.partidas || d.presupuesto || []; delete d.presupuesto;
   d.partidas.forEach(p => {
-    p.fotos = p.fotos || []; p.sub = p.sub || ''; p.items = p.items || []; p.pagos = p.pagos || []; p.avance = +p.avance || 0; p.diasEntrega = +p.diasEntrega || 0;
+    p.fotos = p.fotos || []; p.sub = p.sub || ''; p.items = (p.items || []).map(i => ({...i, id: i.id || uid()})); p.pagos = p.pagos || []; p.avance = +p.avance || 0; p.diasEntrega = +p.diasEntrega || 0;
     p.fechaCarga = p.fechaCarga || ''; p.fechaConf = p.fechaConf || ''; p.proveedor = p.proveedor || ''; p.cacTipo = p.cacTipo || ''; p.cacBase = p.cacBase || '';
     if (p.cron && p.cron.length && !p.pagos.length) p.pagos = p.cron.map(c => ({concepto: 'Cronograma', pct: p.monto ? c.monto / p.monto * 100 : 0, ref: 'fecha', dias: 0, fecha: c.mes + '-15'}));
     delete p.cron;
   });
   d.modif = d.modif || []; d.egresos = d.egresos || []; d.ingresos = d.ingresos || []; d.log = d.log || []; d.rev = d.rev || 0;
-  d.egresos.forEach(e => { e.fotos = e.fotos || []; e.partidaId = e.partidaId || ''; e.compTipo = e.compTipo || ''; if (e.ivaPct === undefined) e.ivaPct = ''; });
+  d.egresos.forEach(e => { e.fotos = e.fotos || []; e.itemId = e.itemId || ''; e.partidaId = e.partidaId || ''; e.compTipo = e.compTipo || ''; if (e.ivaPct === undefined) e.ivaPct = ''; });
   d.ingresos.forEach(i => { i.fotos = i.fotos || []; });
   d.modif.forEach(m => { m.fotos = m.fotos || []; });
   d.cac = d.cac || [];
@@ -399,6 +399,7 @@ const partida = id => S.partidas.find(p => p.id === id);
 const gNombre = id => (gremio(id) || {nombre: '(sin gremio)'}).nombre;
 const eNombre = id => (etapa(id) || {nombre: '(sin etapa)'}).nombre;
 const gEtapa = gid => eNombre((gremio(gid) || {}).etapaId);
+const itemNombre = e => { const p = partida(e.partidaId), i = p && (p.items || []).find(x => x.id === e.itemId); return i ? i.desc : ''; };
 const pNombre = id => { const p = partida(id); return p ? (p.desc || '(sin descripción)') : ''; };
 const etapaFin = e => e && e.inicio && +e.dias > 0 ? addDias(e.inicio, +e.dias) : '';
 
@@ -422,6 +423,11 @@ function ejecutadoNat(p) {
   return {pag, pen, tot: pag + pen};
 }
 
+function ejecutadoItem(p, id) {
+  let pag = 0, pen = 0;
+  S.egresos.forEach(e => { if (e.partidaId !== p.id || e.itemId !== id) return; const v = vEm(e, p.moneda); if (e.estado === 'Pagado') pag += v; else pen += v; });
+  return {pag, pen, tot: pag + pen};
+}
 /* ---- Flujo de pagos acordado ---- */
 function fechaBase(p, x) {
   if (x.ref === 'fecha') return x.fecha || '';
@@ -548,6 +554,7 @@ function alertasPartidas() {
   S.partidas.forEach(p => {
     const V = vigenteNat(p), ej = ejecutadoNat(p), nm = gNombre(p.gremioId) + ' · ' + (p.desc || 'partida');
     if (ej.tot <= 0 || V <= 0) return;
+    if (ej.tot <= V + 0.5) (p.items || []).forEach(i => { const x = ejecutadoItem(p, i.id); if (i.id && x.tot > (+i.monto || 0) + 0.5) out.push({nivel: 'warn', html: `<b>${esc(nm)} › ${esc(i.desc || 'ítem')}</b>: ejecutado ${moneyM(x.tot, p.moneda)} sobre un ítem presupuestado de ${moneyM(+i.monto || 0, p.moneda)} (<b>exceso ${moneyM(x.tot - (+i.monto || 0), p.moneda)}</b>), aunque la partida completa sigue dentro del tope.`}); });
     if (ej.tot > V + 0.5) out.push({nivel: 'bad', html: `<b>${esc(nm)}</b>: ejecutado ${moneyM(ej.tot, p.moneda)} sobre un contrato vigente de ${moneyM(V, p.moneda)} (<b>exceso ${moneyM(ej.tot - V, p.moneda)}</b>, medido en la moneda del contrato).`});
     else if (ej.tot >= V * UMBRAL) out.push({nivel: 'warn', html: `<b>${esc(nm)}</b>: ejecutado ${pct(ej.tot / V * 100)} del contrato (${moneyM(ej.tot, p.moneda)} de ${moneyM(V, p.moneda)}).`});
     if (p.avance > 0 && ej.tot / V * 100 - p.avance > 25) out.push({nivel: 'warn', html: `<b>${esc(nm)}</b>: pagado ${pct(ej.tot / V * 100)} contra un avance físico de ${pct(p.avance)} (anticipo o pago por delante de la obra).`});
@@ -783,7 +790,10 @@ function vPresupuesto() {
           <td class="dos">${p.diasEntrega ? p.diasEntrega + ' días' : '—'}<small>${p.fechaConf && p.diasEntrega ? fd(addDias(p.fechaConf, p.diasEntrega)) : ''}</small></td>
           <td>${flujo} <button class="btn mini edit" data-act="pagos" data-id="${p.id}">Flujo</button> ${clip('partidas', p)}</td>
           <td class="edit n"><button class="btn mini" data-act="editPartida" data-id="${p.id}">Editar</button> <button class="btn mini del" data-act="delPartida" data-id="${p.id}">Borrar</button></td></tr>`;
-        if ((p.items || []).length) h += `<tr class="det"><td colspan="9"><details><summary>Detalle del presupuesto: ${p.items.length} ítem${p.items.length > 1 ? 's' : ''}</summary><table class="det-t"><thead><tr><th>Ítem</th><th>Tipo</th><th class="n">Cant.</th><th class="n">Precio unit.</th><th class="n">Importe (${p.moneda})</th></tr></thead><tbody>${p.items.map(i => `<tr><td>${esc(i.desc)}</td><td>${esc(i.tipo || '')}</td><td class="n">${i.cant ? fmt2(i.cant) + (i.unidad ? ' ' + esc(i.unidad) : '') : ''}</td><td class="n">${i.pu ? fmt2(i.pu) : ''}</td><td class="n">${fmt(i.monto)}</td></tr>`).join('')}</tbody></table></details></td></tr>`;
+        if ((p.items || []).length) {
+          const sinI = S.egresos.filter(e => e.partidaId === p.id && !(p.items || []).some(i => i.id === e.itemId)).reduce((s, e) => s + vEm(e, p.moneda), 0);
+          h += `<tr class="det"><td colspan="9"><details><summary>Detalle del presupuesto: ${p.items.length} ítem${p.items.length > 1 ? 's' : ''} y lo ejecutado en cada uno</summary><table class="det-t"><thead><tr><th>Ítem</th><th>Tipo</th><th class="n">Cant.</th><th class="n">Precio unit.</th><th class="n">Presupuesto (${p.moneda})</th><th class="n">Pagado</th><th class="n">Pendiente</th><th class="n">Saldo</th></tr></thead><tbody>${p.items.map(i => { const x = ejecutadoItem(p, i.id), sd = (+i.monto || 0) - x.tot; return `<tr><td>${esc(i.desc)}</td><td>${esc(i.tipo || '')}</td><td class="n">${i.cant ? fmt2(i.cant) + (i.unidad ? ' ' + esc(i.unidad) : '') : ''}</td><td class="n">${i.pu ? fmt2(i.pu) : ''}</td><td class="n">${fmt(i.monto)}</td><td class="n">${fmt(x.pag)}</td><td class="n">${fmt(x.pen)}</td><td class="n ${sd < -0.5 ? 'neg' : ''}">${fmt(sd)}</td></tr>`; }).join('')}${sinI > 0.5 ? `<tr><td colspan="5"><i>Egresos de la partida sin ítem asignado</i></td><td class="n" colspan="3">${fmt(sinI)}</td></tr>` : ''}</tbody></table></details></td></tr>`;
+        }
       });
     });
     h += `<tr class="tot"><td>Total presupuesto vigente</td><td></td><td></td><td></td><td class="n">${money(tot)}</td><td></td><td></td><td></td><td class="edit"></td></tr></tbody></table></div>`;
@@ -834,7 +844,7 @@ function tablaEgresos() {
   if (!l.length) return '<div class="vacio">No hay egresos para mostrar.</div>';
   const tA = l.reduce((s, e) => s + vEm(e, 'ARS'), 0), tU = l.reduce((s, e) => s + vEm(e, 'USD'), 0);
   return `<div class="tw"><table><thead><tr><th>Fecha</th><th>Gremio / partida</th><th>Proveedor y concepto</th><th>Comprobante</th><th>Medio</th><th>Estado</th><th class="n">Importe</th><th class="n">Dólar</th><th class="n">ARS</th><th class="n">USD</th><th></th><th class="edit"></th></tr></thead><tbody>
-  ${l.map(e => `<tr><td>${fd(e.fecha)}</td><td class="dos">${esc(gNombre(e.gremioId))} ${nivelGremio(gNombre(e.gremioId)) === 'bad' ? '<span class="tag bad">Excedido</span>' : ''}<small>${esc(pNombre(e.partidaId) || 'sin partida asignada')}</small></td>
+  ${l.map(e => `<tr><td>${fd(e.fecha)}</td><td class="dos">${esc(gNombre(e.gremioId))} ${nivelGremio(gNombre(e.gremioId)) === 'bad' ? '<span class="tag bad">Excedido</span>' : ''}<small>${esc(pNombre(e.partidaId) || 'sin partida asignada')}${itemNombre(e) ? ' › ' + esc(itemNombre(e)) : ''}</small></td>
     <td class="dos">${esc(e.proveedor)}<small>${esc(e.concepto)}</small></td><td class="dos">${esc(e.compTipo || '—')}<small>${esc(e.comprobante)}${e.ivaPct !== '' && +e.ivaPct > 0 ? ' · IVA ' + e.ivaPct + ' %' : ''}</small></td><td>${esc(e.medio)}</td>
     <td><span class="tag ${e.estado === 'Pagado' ? 'ok' : 'q'}">${esc(e.estado)}</span></td><td class="n">${e.moneda} ${fmt(e.importe)}</td><td class="n">${fmt(e.tc || S.obra.tc)}</td><td class="n">${moneyM(vEm(e, 'ARS'), 'ARS')}</td><td class="n">${moneyM(vEm(e, 'USD'), 'USD')}</td><td>${clip('egresos', e)}</td>
     <td class="edit n"><button class="btn mini" data-act="editEgreso" data-id="${e.id}">Editar</button> <button class="btn mini del" data-act="delEgreso" data-id="${e.id}">Borrar</button></td></tr>`).join('')}
@@ -1137,6 +1147,7 @@ function form(titulo, campos, vals, onSave, hook, ancho) {
 const optG = () => S.gremios.map(g => [g.id, g.nombre]);
 const optMon = [['ARS', 'ARS (pesos)'], ['USD', 'USD (dólares)']];
 const optPartidas = gid => [['', 'Sin partida (gasto general del gremio)'], ...S.partidas.filter(p => !gid || p.gremioId === gid).map(p => [p.id, (p.sub ? p.sub + ' · ' : '') + (p.desc || 'partida') + (p.proveedor ? ' · ' + p.proveedor : '') + ' (' + p.moneda + ')'])];
+const optItems = pid => { const p = partida(pid); return [['', p && (p.items || []).length ? 'Sin ítem (general de la partida)' : 'La partida no tiene ítems'], ...((p && p.items) || []).map(i => [i.id, (i.tipo ? i.tipo + ' · ' : '') + (i.desc || 'ítem')])]; };
 const optPartidasTodas = () => S.partidas.map(p => [p.id, gNombre(p.gremioId) + ' · ' + (p.desc || 'partida') + ' (' + p.moneda + ')']);
 const cerrado = () => alert('Ese mes está cerrado (' + nombreMes(S.obra.cerradoHasta) + '). Reabrilo en Configuración si necesitás corregirlo.');
 
@@ -1149,6 +1160,7 @@ function fEgreso(e) {
     {k: 'estado', label: 'Estado', type: 'select', opts: [['Pagado', 'Pagado'], ['Pendiente', 'Pendiente / a pagar']]},
     {k: 'gremioId', label: 'Gremio', type: 'select', opts: optG()},
     {k: 'partidaId', label: 'Partida o contrato', type: 'select', opts: optPartidas(v.gremioId)},
+    {k: 'itemId', label: 'Ítem del presupuesto', type: 'select', opts: optItems(v.partidaId), full: 1},
     {k: 'proveedor', label: 'Proveedor / contratista', list: 'dlProv'},
     {k: 'concepto', label: 'Concepto'},
     {k: 'compTipo', label: 'Tipo de comprobante', type: 'select', opts: COMPROB.map(x => [x, x])},
@@ -1164,15 +1176,18 @@ function fEgreso(e) {
     const dup = S.egresos.find(x => x !== e && o.proveedor && ((o.comprobante && x.comprobante === o.comprobante && x.proveedor === o.proveedor) || (x.importe === o.importe && x.fecha === o.fecha && x.proveedor === o.proveedor && x.moneda === o.moneda)));
     if (dup && !confirm('Posible duplicado: ya hay un egreso de ' + dup.proveedor + ' por ' + dup.moneda + ' ' + fmt(dup.importe) + ' del ' + fd(dup.fecha) + (dup.comprobante ? ' (comprobante ' + dup.comprobante + ')' : '') + '. ¿Guardar igual?')) return false;
     if (o.partidaId) { const p = partida(o.partidaId); if (p) o.gremioId = p.gremioId; }
+    if (!o.partidaId || !(partida(o.partidaId).items || []).some(i => i.id === o.itemId)) o.itemId = '';
     if (o.tc > 0) S.obra.tc = o.tc;
     if (nuevo) S.egresos.push({id: uid(), ...o}); else Object.assign(e, o);
     logc(nuevo ? 'Egreso nuevo' : 'Egreso editado', `${gNombre(o.gremioId)} · ${o.proveedor || 's/proveedor'} · ${o.moneda} ${fmt(o.importe)} (${o.estado}, ${fd(o.fecha)})`);
     avisoTrasGuardar(o.gremioId, o.partidaId);
   }, f => {
-    const sg = f.elements.gremioId, sp = f.elements.partidaId;
-    sg.onchange = () => { const cur = sp.value; sp.innerHTML = optPartidas(sg.value).map(([val, lab]) => `<option value="${esc(val)}">${esc(lab)}</option>`).join(''); sp.value = [...sp.options].some(o => o.value === cur) ? cur : ''; };
+    const sg = f.elements.gremioId, sp = f.elements.partidaId, si = f.elements.itemId;
+    const llenarItems = (sel) => { si.innerHTML = optItems(sp.value).map(([val, lab]) => `<option value="${esc(val)}">${esc(lab)}</option>`).join(''); si.value = [...si.options].some(o => o.value === sel) ? sel : ''; };
+    sg.onchange = () => { const cur = sp.value; sp.innerHTML = optPartidas(sg.value).map(([val, lab]) => `<option value="${esc(val)}">${esc(lab)}</option>`).join(''); sp.value = [...sp.options].some(o => o.value === cur) ? cur : ''; llenarItems(''); };
     sp.value = v.partidaId || '';
-    sp.onchange = () => { const p = partida(sp.value); if (!p) return; if (!f.elements.proveedor.value) f.elements.proveedor.value = p.proveedor || ''; };
+    llenarItems(v.itemId || '');
+    sp.onchange = () => { const p = partida(sp.value); llenarItems(''); if (!p) return; if (!f.elements.proveedor.value) f.elements.proveedor.value = p.proveedor || ''; };
   });
 }
 function fPartida(p) {
@@ -1200,8 +1215,8 @@ function fPartida(p) {
     if (items.length) o.monto = items.reduce((s, i) => s + (+i.monto || 0), 0);
     if (!nuevo && p.fechaConf && o.monto !== p.monto && !confirm('Esta partida ya está confirmada. Cambiar el monto original altera la línea base. Para cambios posteriores conviene registrar un adicional o deductivo. ¿Cambiarlo igual?')) return false;
     if (o.tc > 0) S.obra.tc = o.tc;
-    o.items = items.map(i => ({desc: i.desc || '', tipo: i.tipo || '', unidad: i.unidad || '', cant: +i.cant || 0, pu: +i.pu || 0, monto: +i.monto || 0}));
-    if (nuevo) S.partidas.push({id: uid(), pagos: [], avance: 0, ...o}); else Object.assign(p, o);
+    o.items = items.map(i => ({id: i.id || uid(), desc: i.desc || '', tipo: i.tipo || '', unidad: i.unidad || '', cant: +i.cant || 0, pu: +i.pu || 0, monto: +i.monto || 0}));
+    if (nuevo) S.partidas.push({id: uid(), pagos: [], avance: 0, ...o}); else { Object.assign(p, o); const ids = new Set(o.items.map(i => i.id)); S.egresos.forEach(e => { if (e.partidaId === p.id && e.itemId && !ids.has(e.itemId)) e.itemId = ''; }); }
     logc(nuevo ? 'Partida nueva' : 'Partida editada', `${gNombre(o.gremioId)}${o.sub ? ' › ' + o.sub : ''} · ${o.desc || 'partida'} · ${o.moneda} ${fmt(o.monto)}${items.length ? ' (' + items.length + ' ítems)' : ''}`);
   }, f => {
     const box = $('#itemsBox'), mi = f.elements.monto;
@@ -1391,7 +1406,7 @@ function exportXLSX() {
   add(S.partidas.flatMap(p => pagosCalc(p).map(x => ({Gremio: gNombre(p.gremioId), Partida: p.desc, Concepto: x.concepto, '%': x.pct, Desde: x.ref, 'Días': x.dias, Fecha: x.fecha, Moneda: p.moneda, Monto: Math.round(x.monto)}))), 'Flujo de pagos');
   add(S.partidas.flatMap(p => (p.items || []).map(i => ({Gremio: gNombre(p.gremioId), Subfamilia: p.sub || '', Contratista: p.proveedor, Presupuesto: p.desc, Ítem: i.desc, Tipo: i.tipo, Cantidad: i.cant, Unidad: i.unidad, 'Precio unitario': i.pu, Importe: i.monto, Moneda: p.moneda}))), 'Ítems de presupuesto');
   add(S.modif.map(m => ({Fecha: m.fecha, Partida: pNombre(m.partidaId), Tipo: m.tipo, Monto: m.monto, Motivo: m.motivo, Aprobada: m.aprobado ? 'Sí' : 'No'})), 'Modificaciones');
-  add(egresosFiltrados().map(e => ({Fecha: e.fecha, Gremio: gNombre(e.gremioId), Partida: pNombre(e.partidaId), Proveedor: e.proveedor, Concepto: e.concepto, 'Tipo comprobante': e.compTipo, Comprobante: e.comprobante, 'IVA %': e.ivaPct, Medio: e.medio, Estado: e.estado, Moneda: e.moneda, Importe: e.importe, Dólar: e.tc || S.obra.tc, ARS: Math.round(vEm(e, 'ARS')), USD: Math.round(vEm(e, 'USD'))})), 'Egresos');
+  add(egresosFiltrados().map(e => ({Fecha: e.fecha, Gremio: gNombre(e.gremioId), Partida: pNombre(e.partidaId), Ítem: itemNombre(e), Proveedor: e.proveedor, Concepto: e.concepto, 'Tipo comprobante': e.compTipo, Comprobante: e.comprobante, 'IVA %': e.ivaPct, Medio: e.medio, Estado: e.estado, Moneda: e.moneda, Importe: e.importe, Dólar: e.tc || S.obra.tc, ARS: Math.round(vEm(e, 'ARS')), USD: Math.round(vEm(e, 'USD'))})), 'Egresos');
   add(S.ingresos.map(i => ({Fecha: i.fecha, Aportante: i.aportante, Concepto: i.concepto, Comprobante: i.comprobante, Medio: i.medio, Estado: i.estado, Moneda: i.moneda, Importe: i.importe, Dólar: i.tc || S.obra.tc, ARS: Math.round(vEm(i, 'ARS')), USD: Math.round(vEm(i, 'USD'))})), 'Aportes');
   add(cajaCalc().filas.map(f => ({Mes: f.k, ['Saldo inicial ' + MON]: Math.round(f.iniC), ['Aportes ' + MON]: Math.round(f.apo), ['Egresos pagados ' + MON]: Math.round(f.eg), ['Saldo final ' + MON]: Math.round(f.sC), 'Caja ARS': Math.round(f.sA), 'Caja USD': Math.round(f.sU)})), 'Cierre de caja');
   add(agrupar('gremio').map(r => ({Gremio: r.k, ['Vigente ' + MON]: Math.round(r.pres), Pagado: Math.round(r.pag), Pendiente: Math.round(r.pen), Saldo: Math.round(r.pres - r.pag - r.pen)})), 'Resumen por gremio');
