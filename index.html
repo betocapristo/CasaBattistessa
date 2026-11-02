@@ -1488,7 +1488,7 @@ function fWa(i) {
   const cs = wasContactos(), c = i === undefined ? {nombre: '', tel: ''} : cs[i];
   form(i === undefined ? 'Nuevo contacto para avisos' : 'Editar contacto', [
     {k: 'nombre', label: 'Nombre', req: 1, full: 1},
-    {k: 'tel', label: 'WhatsApp con código de país', req: 1, full: 1, hint: 'Ej.: +54 9 2494 12-3456 (Argentina celular lleva 9 después del 54)'}
+    {k: 'tel', label: 'WhatsApp con código de país', req: 1, full: 1, hint: 'Ej.: +54 9 11 1234-5678 (Argentina celular lleva 9 después del 54)'}
   ], c, o => { if (waNum(o.tel).length < 10) { alert('El número parece incompleto.'); return false; } if (i === undefined) cs.push(o); else cs[i] = o; lsSet(KEY_WA, JSON.stringify(cs)); });
 }
 
