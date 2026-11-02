@@ -1066,6 +1066,10 @@ function vConfig() {
   <h3 class="sec">Publicar para el propietario</h3>
   <p class="nota">Sube los datos y los archivos adjuntos a un repositorio de GitHub cifrados con una clave. La página es pública, pero sin la clave no se ve nada. ${gh.ultima ? 'Última publicación: ' + new Date(gh.ultima).toLocaleString('es-AR') + '.' : 'Todavía no publicaste.'}</p>
   <div class="tools"><button class="btn pri" data-act="publicar">Publicar en GitHub</button></div>
+  <h3 class="sec">Avisos por WhatsApp</h3>
+  <p class="nota">Después de publicar aparece un botón para avisar al propietario con las novedades. El número queda guardado solo en este navegador.</p>
+  ${wasContactos().length ? `<div class="tw"><table><thead><tr><th>Contacto</th><th>WhatsApp</th><th></th></tr></thead><tbody>${wasContactos().map((c, i) => `<tr><td>${esc(c.nombre)}</td><td>${esc(c.tel)}</td><td class="n"><button class="btn mini pri" data-act="waAvisar" data-i="${i}">Avisar ahora</button> <button class="btn mini" data-act="waEdit" data-i="${i}">Editar</button> <button class="btn mini del" data-act="waDel" data-i="${i}">Quitar</button></td></tr>`).join('')}</tbody></table></div>` : ''}
+  <div class="tools"><button class="btn" data-act="waNuevo">Agregar contacto</button></div>
   <h3 class="sec">Respaldo</h3>
   <div class="tools"><button class="btn pri" data-act="exportPaquete">Exportar paquete completo (zip con archivos)</button><button class="btn" data-act="exportJSON">Solo data.json</button><button class="btn" data-act="importJSON">Importar paquete o data.json</button><button class="btn" data-act="plantilla">Plantilla Excel de egresos</button></div>
   <p class="nota">Además se guarda una copia automática por día (últimos 7 días) en este navegador, sin archivos adjuntos.</p>
@@ -1452,6 +1456,42 @@ function importarXLSX(file) {
   r.readAsArrayBuffer(file);
 }
 
+/* ============ Aviso por WhatsApp ============ */
+const KEY_WA = 'obra_wa', KEY_PSNAP = 'obra_pub_snap', KEY_WAMSG = 'obra_wa_msg';
+const hashStr = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; };
+const snapNow = () => { const m = l => Object.fromEntries(S[l].map(x => [x.id, hashStr(JSON.stringify({...x, fotos: (x.fotos || []).length})) ])); return {e: m('egresos'), i: m('ingresos'), p: m('partidas'), m: m('modif')}; };
+function cambiosTexto(prev, now) {
+  if (!prev) return 'datos actualizados';
+  const NOM = {e: ['egreso', 'egresos', 'o'], i: ['aporte', 'aportes', 'o'], p: ['partida', 'partidas', 'a'], m: ['modificación', 'modificaciones', 'a']}, out = [];
+  Object.keys(NOM).forEach(k => {
+    const a = prev[k] || {}, b = now[k] || {}; let nu = 0, ca = 0;
+    Object.keys(b).forEach(id => { if (!(id in a)) nu++; else if (a[id] !== b[id]) ca++; });
+    if (nu) out.push(nu + ' ' + NOM[k][nu > 1 ? 1 : 0] + ' nuev' + NOM[k][2] + (nu > 1 ? 's' : ''));
+    if (ca) out.push(ca + ' ' + NOM[k][ca > 1 ? 1 : 0] + ' actualizad' + NOM[k][2] + (ca > 1 ? 's' : ''));
+  });
+  return out.length ? out.join(', ') : 'ajustes menores';
+}
+const wasContactos = () => { try { return JSON.parse(lsGet(KEY_WA, '[]')); } catch (e) { return []; } };
+const waNum = t => String(t || '').replace(/\D/g, '');
+function waLink(c, cambios) {
+  const url = location.origin + location.pathname.replace(/index\.html$/, '');
+  const nombre = (c.nombre || '').split(' ')[0];
+  const txt = `Hola ${nombre}, actualicé el panel de la obra.${cambios ? ' Novedades: ' + cambios + '.' : ''} Podés verlo acá: ${url}`;
+  return 'https://wa.me/' + waNum(c.tel) + '?text=' + encodeURIComponent(txt);
+}
+function avisosHtml(cambios) {
+  const cs = wasContactos();
+  if (!cs.length) return '<p class="hint">Para avisar por WhatsApp, cargá un contacto en Configuración → Avisos por WhatsApp.</p>';
+  return `<div class="tools">${cs.map(c => `<a class="btn pri" href="${esc(waLink(c, cambios))}" target="_blank" rel="noopener">Avisar a ${esc(c.nombre || c.tel)} por WhatsApp</a>`).join('')}</div><p class="hint">Se abre WhatsApp con el mensaje escrito; solo falta tocar Enviar.</p>`;
+}
+function fWa(i) {
+  const cs = wasContactos(), c = i === undefined ? {nombre: '', tel: ''} : cs[i];
+  form(i === undefined ? 'Nuevo contacto para avisos' : 'Editar contacto', [
+    {k: 'nombre', label: 'Nombre', req: 1, full: 1},
+    {k: 'tel', label: 'WhatsApp con código de país', req: 1, full: 1, hint: 'Ej.: +54 9 2494 12-3456 (Argentina celular lleva 9 después del 54)'}
+  ], c, o => { if (waNum(o.tel).length < 10) { alert('El número parece incompleto.'); return false; } if (i === undefined) cs.push(o); else cs[i] = o; lsSet(KEY_WA, JSON.stringify(cs)); });
+}
+
 /* ============ Publicar en GitHub (cifrado) ============ */
 function fPublicar() {
   const g = JSON.parse(lsGet(KEY_GH, '{}')); let ses = ''; try { ses = sessionStorage.getItem('obra_clave') || ''; } catch (e) { /* noop */ }
@@ -1507,8 +1547,11 @@ async function publicarJob(c) {
     lsSet(KEY_GH, JSON.stringify({repo: c.repo, branch: c.branch, token: c.token, ch: c.ch || await sha(c.clave + '|' + saltLocal().join('.')), ultima: Date.now()})); lsSet(KEY_EXP, Date.now());
     try { sessionStorage.setItem('obra_clave', c.clave); } catch (e2) { /* noop */ }
     logc('Publicación', c.repo + ' · ' + ids.length + ' fotos nuevas'); guardar();
-    say('Publicado. En un par de minutos el propietario ve la versión nueva con su clave.');
-    setTimeout(() => { $('#modal').innerHTML = ''; render(); }, 2200);
+    let prevS = null; try { prevS = JSON.parse(lsGet(KEY_PSNAP, 'null')); } catch (e3) { /* noop */ }
+    const nowS = snapNow(), cambios = cambiosTexto(prevS, nowS); lsSet(KEY_PSNAP, JSON.stringify(nowS)); lsSet(KEY_WAMSG, cambios);
+    est.innerHTML = '<b>Publicado.</b> En un par de minutos el propietario ve la versión nueva con su clave.<br>Novedades: ' + esc(cambios) + '.' + avisosHtml(cambios);
+    const bt = $('#modal .bt .btn.pri'); if (bt) bt.disabled = true; const cb = $('#modal .bt .btn:not(.pri)'); if (cb) cb.textContent = 'Cerrar';
+    render();
   } catch (e) { say('No se pudo publicar: ' + (e.message || e)); }
 }
 
@@ -1606,6 +1649,10 @@ document.addEventListener('click', ev => {
   else if (a === 'plantilla') plantilla();
   else if (a === 'publicar') fPublicar();
   else if (a === 'publicarRapido') publicarRapido();
+  else if (a === 'waNuevo') fWa();
+  else if (a === 'waEdit') fWa(+el.dataset.i);
+  else if (a === 'waDel') { const cs = wasContactos(); if (confirm('¿Quitar este contacto?')) { cs.splice(+el.dataset.i, 1); lsSet(KEY_WA, JSON.stringify(cs)); render(); } }
+  else if (a === 'waAvisar') { const cs = wasContactos(), c = cs[+el.dataset.i]; if (c) window.open(waLink(c, lsGet(KEY_WAMSG, '')), '_blank', 'noopener'); }
   else if (a === 'demo') demo();
   else if (a === 'restaurar') { const sn = JSON.parse(lsGet(KEY_SNAP, '[]'))[+el.dataset.i]; if (sn && confirm('Se reemplazan los datos actuales por la copia del ' + fd(sn.d) + '. ¿Seguir?')) { S = migrar(JSON.parse(sn.data)); logc('Restauración', 'copia del ' + sn.d); guardar(); render(); } }
   else if (a === 'reset') { if (confirm('¿Borrar TODOS los datos de este navegador, incluidas las fotos? Exportá antes el respaldo si querés conservarlos.')) { fotosIds().forEach(fDel); S = nuevoEstado(); guardar(); render(); } }
