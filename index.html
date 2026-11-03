@@ -1526,7 +1526,9 @@ async function publicarJob(c) {
       const r = await fetch(base + path, {method: 'PUT', headers: {...H, 'Content-Type': 'application/json'}, body: JSON.stringify({message: msg, content: b64c, branch: c.branch, ...(sha ? {sha} : {})})});
       if (!r.ok) { let m = ''; try { m = (await r.json()).message; } catch (e) { /* noop */ } throw new Error('No se pudo subir ' + path + ': ' + (m || r.status)); }
     };
+    c.clave = c.clave.normalize('NFC').trim();
     const ch = await sha(c.clave + '|' + saltLocal().join('.')), prev = JSON.parse(lsGet(KEY_GH, '{}'));
+    if (c.auto && prev.ch && prev.ch !== ch && !confirm('Esta clave es DISTINTA a la que usaste en la publicación anterior:\n\n' + c.clave + '\n\nSi te equivocaste al escribirla, el propietario no va a poder entrar. ¿Es la correcta?')) throw new Error('Publicación cancelada: revisá la clave.');
     if (c.auto && prev.ch && prev.ch !== ch) { c.todas = 'si'; say('La clave cambió: se reenviarán todos los archivos.'); }
     c.ch = ch;
     say('Cifrando datos…');
@@ -1689,8 +1691,9 @@ try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () =
 /* ============ Arranque ============ */
 function promptClave(msg) {
   return new Promise(res => {
-    $('#modal').innerHTML = `<div class="ov"><form class="md"><h3>Obra protegida</h3><p>${msg}</p><label class="in">Clave de acceso<input type="password" id="claveIn" required autocomplete="current-password"></label><div class="bt"><button class="btn pri">Entrar</button></div></form></div>`;
+    $('#modal').innerHTML = `<div class="ov"><form class="md"><h3>Obra protegida</h3><p>${msg}</p><label class="in">Clave de acceso<input type="password" id="claveIn" required autocomplete="current-password"></label><label class="hint"><input type="checkbox" id="verClave"> Mostrar la clave mientras la escribo</label><div class="bt"><button class="btn pri">Entrar</button></div></form></div>`;
     $('#modal form').onsubmit = ev => { ev.preventDefault(); const v = $('#claveIn').value; $('#modal').innerHTML = ''; res(v); };
+    $('#verClave').onchange = e => { $('#claveIn').type = e.target.checked ? 'text' : 'password'; };
     $('#claveIn').focus();
   });
 }
@@ -1700,8 +1703,11 @@ async function abrirCifrado(env) {
   for (;;) {
     if (!clave) clave = await promptClave(msg);
     try {
-      KEYC = await derivar(clave, unb64(env.salt));
-      const pl = await descifrarBytes(unb64(env.iv), unb64(env.ct), KEYC);
+      let pl = null;
+      for (const cand of [...new Set([clave, clave.trim(), clave.normalize('NFC'), clave.normalize('NFC').trim(), clave.normalize('NFD').trim()])]) {
+        try { KEYC = await derivar(cand, unb64(env.salt)); pl = await descifrarBytes(unb64(env.iv), unb64(env.ct), KEYC); break; } catch (e0) { /* probar otra variante */ }
+      }
+      if (!pl) throw new Error('clave');
       S = migrar(JSON.parse(new TextDecoder().decode(pl)));
       try { sessionStorage.setItem('obra_clave', clave); } catch (e) { /* noop */ }
       return;
