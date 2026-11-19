@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inversión Parque</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111a21;color:#e8edf1;font:16px/1.5 system-ui,Segoe UI,Arial,sans-serif}
+.c{width:min(380px,92vw);padding:28px;background:#18242d;border:1px solid #2c3d49}
+h1{margin:0 0 6px;font-size:20px}p{margin:0 0 16px;color:#a9b8c3;font-size:14px}
+input{width:100%;box-sizing:border-box;padding:10px;font:inherit;border:1px solid #4a5f6e;background:#0f171d;color:#fff}
+label.v{display:block;margin:8px 0 0;font-size:13px;color:#a9b8c3}
+button,a.b{display:inline-block;margin-top:16px;padding:10px 16px;border:0;background:#2f6fdc;color:#fff;font:600 15px inherit;font-family:inherit;cursor:pointer;text-decoration:none}
+a.b{background:transparent;border:1px solid #4a5f6e;margin-left:8px}
+.e{color:#ff9d8a;font-size:14px;margin-top:10px;min-height:1em}
+</style></head><body>
+<div class="c" id="c"><h1>Inversión Parque</h1><p id="msg">Cargando…</p></div>
+<script>
+const ED = new URLSearchParams(location.search).has('editar'), CASA = ED ? '../?editar=1' : '../';
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const $ = id => document.getElementById(id);
+async function derivar(clave, salt) {
+  const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(clave), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256'}, km, {name: 'AES-GCM', length: 256}, false, ['decrypt']);
+}
+function pedir(msg) {
+  return new Promise(res => {
+    $('c').innerHTML = '<h1>Inversión Parque</h1><p>' + msg + '</p><form id="f"><input type="password" id="k" required autocomplete="current-password" aria-label="Clave de acceso"><label class="v"><input type="checkbox" id="v" style="width:auto"> Mostrar la clave</label><button>Entrar</button><a class="b" href="' + CASA + '">Volver a Casa</a></form>';
+    $('v').onchange = e => { $('k').type = e.target.checked ? 'text' : 'password'; };
+    $('f').onsubmit = ev => { ev.preventDefault(); res($('k').value); };
+    $('k').focus();
+  });
+}
+(async () => {
+  try {
+    if (!crypto || !crypto.subtle) throw new Error('Este navegador no permite abrir contenido protegido desde esta dirección.');
+    const [dj, pb] = await Promise.all([fetch('../data.json?t=' + Date.now()), fetch('../parque.bin?t=' + Date.now())]);
+    if (!pb.ok) throw new Error('Todavía no se publicó la Inversión Parque.');
+    const env = await dj.json(), buf = new Uint8Array(await pb.arrayBuffer()), salt = unb64(env.salt);
+    let clave = ''; try { clave = sessionStorage.getItem('obra_clave') || ''; } catch (e) {}
+    let msg = 'Ingresá la clave de acceso para ver el informe.', html = null;
+    for (;;) {
+      if (!clave) clave = await pedir(msg);
+      for (const cand of [...new Set([clave, clave.trim(), clave.normalize('NFC'), clave.normalize('NFC').trim(), clave.normalize('NFD').trim()])]) {
+        try { html = new TextDecoder().decode(new Uint8Array(await crypto.subtle.decrypt({name: 'AES-GCM', iv: buf.slice(0, 12)}, await derivar(cand, salt), buf.slice(12)))); break; } catch (e) { /* otra variante */ }
+      }
+      if (html) { try { sessionStorage.setItem('obra_clave', clave); } catch (e) {} break; }
+      msg = 'La clave no es correcta. Probá de nuevo.'; clave = ''; try { sessionStorage.removeItem('obra_clave'); } catch (e) {}
+    }
+    const barra = '<div style="position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:12px;padding:8px 16px;background:#111a21;border-bottom:1px solid #2c3d49;font:600 14px system-ui,Segoe UI,Arial,sans-serif"><a href="' + CASA + '" style="color:#fff;text-decoration:none">\u2190 Volver a Casa</a><span style="color:#a9b8c3;font-weight:400">Inversión Parque</span></div>';
+    html = /<body[^>]*>/i.test(html) ? html.replace(/<body[^>]*>/i, m => m + barra) : barra + html;
+    document.open(); document.write(html); document.close();
+  } catch (e) {
+    $('c').innerHTML = '<h1>Inversión Parque</h1><p>' + (e.message || e) + '</p><a class="b" style="margin-left:0" href="' + CASA + '">Volver a Casa</a>';
+  }
+})();
+</script></body></html>

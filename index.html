@@ -222,6 +222,11 @@ tr.det summary{cursor:pointer;color:var(--azul);font-size:13px;padding:2px 0}
 .items-box input,.items-box select{width:100%;min-width:0}
 .items-tot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-weight:600}
 
+.riel .parquelink{display:flex;align-items:center;gap:10px;margin:14px 22px 0;padding:10px 12px;color:#e8edf1;text-decoration:none;border:1px solid rgba(255,255,255,.22);font:600 14px var(--fuente-t)}
+.riel .parquelink:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.4)}
+.riel .parquelink:focus-visible{outline:2px solid #fff;outline-offset:2px}
+@media(max-width:900px){.riel .parquelink{margin:6px 8px}}
+
 </style>
 </head>
 <body>
@@ -237,6 +242,7 @@ tr.det summary{cursor:pointer;color:var(--azul);font-size:13px;padding:2px 0}
 <div id="modal"></div>
 <div id="tip"></div>
 <input type="file" id="fJSON" accept=".json,.zip" hidden>
+<input type="file" id="fParque" accept=".html,.htm,text/html" hidden>
 <input type="file" id="fXLSX" accept=".xlsx,.xls,.csv" hidden>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -645,6 +651,7 @@ const TITULOS = {resumen: 'Resumen de control', presupuesto: 'Presupuesto por gr
 
 function pintarRiel() {
   $('#riel').innerHTML = `<div class="marca"><b>${esc(S.obra.nombre || 'Obra')}</b><span>${esc(S.obra.propietario || 'Administración de obra')}</span></div>` +
+    `<a class="parquelink" href="parque/index.html${VISOR ? '' : '?editar=1'}"><svg viewBox="0 0 40 28" width="30" height="21" aria-hidden="true"><path d="M2 26V11L20 3l18 8v15z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M11 26V14h18v12M11 18h18M11 22h18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span>Inversión Parque</span></a>` +
     NAV.map(g => `<div class="grupo">${g.g}</div>` + g.items.filter(([v]) => !(VISOR && v === 'config')).map(([v, l]) => `<button class="nav ${v === VIEW ? 'on' : ''}" data-act="vista" data-v="${v}">${l}</button>`).join('')).join('') +
     (VISOR ? '' : `<button class="pubbtn" data-act="publicarRapido">Publicar para el propietario</button>`) +
     `<div class="pie">${VISOR ? 'Vista de solo lectura' : 'Edición · datos en este navegador'}<br>Dólar blue de referencia: $${fmt(S.obra.tc)}</div>`;
@@ -1066,6 +1073,9 @@ function vConfig() {
   <h3 class="sec">Publicar para el propietario</h3>
   <p class="nota">Sube los datos y los archivos adjuntos a un repositorio de GitHub cifrados con una clave. La página es pública, pero sin la clave no se ve nada. ${gh.ultima ? 'Última publicación: ' + new Date(gh.ultima).toLocaleString('es-AR') + '.' : 'Todavía no publicaste.'}</p>
   <div class="tools"><button class="btn pri" data-act="publicar">Publicar en GitHub</button></div>
+  <h3 class="sec">Inversión Parque</h3>
+  <p class="nota">Informe del parque logístico, que se publica tal cual y cifrado. Cargá acá el archivo HTML y se sube con la próxima publicación. ${(() => { const q = parqueMeta(); return q ? 'Cargado: ' + esc(q.nombre) + ' (' + Math.round(q.size / 1024) + ' KB, ' + new Date(q.t).toLocaleDateString('es-AR') + '). ' + (q.pub ? 'Ya publicado.' : 'Pendiente de publicar.') : 'Todavía no cargaste el archivo.'; })()}</p>
+  <div class="tools"><button class="btn" data-act="parqueCargar">${parqueMeta() ? 'Reemplazar el archivo' : 'Cargar archivo del Parque'}</button></div>
   <h3 class="sec">Avisos por WhatsApp</h3>
   <p class="nota">Después de publicar aparece un botón para avisar al propietario con las novedades. El número queda guardado solo en este navegador.</p>
   ${wasContactos().length ? `<div class="tw"><table><thead><tr><th>Contacto</th><th>WhatsApp</th><th></th></tr></thead><tbody>${wasContactos().map((c, i) => `<tr><td>${esc(c.nombre)}</td><td>${esc(c.tel)}</td><td class="n"><button class="btn mini pri" data-act="waAvisar" data-i="${i}">Avisar ahora</button> <button class="btn mini" data-act="waEdit" data-i="${i}">Editar</button> <button class="btn mini del" data-act="waDel" data-i="${i}">Quitar</button></td></tr>`).join('')}</tbody></table></div>` : ''}
@@ -1457,6 +1467,8 @@ function importarXLSX(file) {
 }
 
 /* ============ Aviso por WhatsApp ============ */
+const KEY_PARQUE = 'obra_parque';
+const parqueMeta = () => { try { return JSON.parse(lsGet(KEY_PARQUE, 'null')); } catch (e) { return null; } };
 const KEY_WA = 'obra_wa', KEY_PSNAP = 'obra_pub_snap', KEY_WAMSG = 'obra_wa_msg';
 const hashStr = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; };
 const snapNow = () => { const m = l => Object.fromEntries(S[l].map(x => [x.id, hashStr(JSON.stringify({...x, fotos: (x.fotos || []).length})) ])); return {e: m('egresos'), i: m('ingresos'), p: m('partidas'), m: m('modif')}; };
@@ -1544,6 +1556,12 @@ async function publicarJob(c) {
       const e = await cifrarBytes(new Uint8Array(await blob.arrayBuffer()), key), out = new Uint8Array(12 + e.ct.length); out.set(e.iv, 0); out.set(e.ct, 12);
       await put('fotos/' + id + '.bin', b64(out), 'Archivo adjunto'); pub.add(id); lsSet(pk, JSON.stringify([...pub]));
     }
+    const pm = parqueMeta();
+    if (pm && (!pm.pub || c.todas === 'si')) {
+      say('Subiendo Inversión Parque cifrado…');
+      const pb = await fGet('parque_html');
+      if (pb) { const e = await cifrarBytes(new Uint8Array(await pb.arrayBuffer()), key), out = new Uint8Array(12 + e.ct.length); out.set(e.iv, 0); out.set(e.ct, 12); await put('parque.bin', b64(out), 'Inversión Parque'); pm.pub = true; lsSet(KEY_PARQUE, JSON.stringify(pm)); }
+    }
     say('Subiendo datos…');
     await put('data.json', b64(new TextEncoder().encode(JSON.stringify(env))), 'Actualización de datos de obra (Rev. ' + (S.rev || 0) + ')');
     lsSet(KEY_GH, JSON.stringify({repo: c.repo, branch: c.branch, token: c.token, ch: c.ch || await sha(c.clave + '|' + saltLocal().join('.')), ultima: Date.now()})); lsSet(KEY_EXP, Date.now());
@@ -1606,7 +1624,7 @@ document.addEventListener('click', ev => {
     if (!confirm(msg)) return;
     (it.fotos || []).forEach(f => fDel(f.id)); S[lista].splice(S[lista].indexOf(it), 1); logc('Borrado', desc(it)); guardar(); render();
   };
-  if (a === 'vista') { VIEW = el.dataset.v; render(); window.scrollTo(0, 0); }
+  if (a === 'vista') { VIEW = el.dataset.v; try { sessionStorage.setItem('obra_vista', VIEW); } catch (e) { /* noop */ } render(); window.scrollTo(0, 0); }
   else if (a === 'mon') { MON = el.dataset.v; lsSet(KEY_MON, MON); render(); }
   else if (a === 'cerrar') cerrarForm();
   else if (a === 'quitarFoto') { FT.lista = FT.lista.filter(f => f.id !== id); if (FT.nuevas.includes(id)) { FT.nuevas = FT.nuevas.filter(x => x !== id); fDel(id); } else FT.quitadas.push(id); pintarThumbs(); }
@@ -1651,6 +1669,7 @@ document.addEventListener('click', ev => {
   else if (a === 'plantilla') plantilla();
   else if (a === 'publicar') fPublicar();
   else if (a === 'publicarRapido') publicarRapido();
+  else if (a === 'parqueCargar') $('#fParque').click();
   else if (a === 'waNuevo') fWa();
   else if (a === 'waEdit') fWa(+el.dataset.i);
   else if (a === 'waDel') { const cs = wasContactos(); if (confirm('¿Quitar este contacto?')) { cs.splice(+el.dataset.i, 1); lsSet(KEY_WA, JSON.stringify(cs)); render(); } }
@@ -1681,6 +1700,13 @@ $('#fJSON').onchange = ev => {
   const r = new FileReader();
   r.onload = e => { try { const d = JSON.parse(e.target.result); if (d.alg) return alert('Ese archivo está cifrado (es el de publicación). Importá el respaldo completo.'); if (!d.gremios || !d.egresos) throw 0; S = migrar(d); logc('Importación', 'data.json'); guardar(); render(); } catch (x) { alert('El archivo no es un data.json válido.'); } };
   r.readAsText(f);
+};
+$('#fParque').onchange = async ev => {
+  const fl = ev.target.files[0]; ev.target.value = ''; if (!fl) return;
+  if (fl.size > 20 * 1024 * 1024) return alert('El archivo pesa demasiado (máximo 20 MB).');
+  const txt = await fl.text(); if (!/<html|<!doctype/i.test(txt)) return alert('Ese archivo no parece un HTML.');
+  await fPut('parque_html', new Blob([txt], {type: 'text/html'}));
+  lsSet(KEY_PARQUE, JSON.stringify({nombre: fl.name, size: fl.size, t: Date.now(), pub: false})); logc('Inversión Parque', 'archivo cargado: ' + fl.name); render();
 };
 $('#fXLSX').onchange = ev => { const f = ev.target.files[0]; if (f) importarXLSX(f); ev.target.value = ''; };
 const tip = $('#tip');
@@ -1720,6 +1746,7 @@ async function init() {
     try { const r = await fetch('data.json?t=' + Date.now()); d = await r.json(); } catch (e) { /* sin datos */ }
     if (d && d.alg) await abrirCifrado(d); else S = d && d.gremios ? migrar(d) : nuevoEstado();
   } else cargarLocal();
+  try { const vs = sessionStorage.getItem('obra_vista'); if (vs && NAV.some(g => g.items.some(([x]) => x === vs && !(VISOR && x === 'config')))) VIEW = vs; } catch (e) { /* noop */ }
   render();
 }
 init();
